@@ -109,6 +109,9 @@ def main():
         print("❌ No records")
         return
     sb = create_client(SUPABASE_URL, SUPABASE_KEY)
+    # ✅ Full refresh: purana data remove — sirf latest rahe
+    sb.table("assigned_employees").delete().gte("id", 0).execute()
+    print("🗑️ Purana data remove — fresh insert ho raha hai...")
     for i in range(0, len(records), 100):
         batch = records[i:i+100]
         sb.table("assigned_employees").upsert(batch, on_conflict="id").execute()

@@ -157,9 +157,12 @@ def main():
         print(f"📥 Page {page}... ✅ +{len(more)}")
         time.sleep(0.5)
 
-    # ✅ Supabase upsert
+    # ✅ Supabase upload (full refresh)
     from supabase import create_client
     sb = create_client(SUPABASE_URL, SUPABASE_KEY)
+    # ✅ Sirf PURANI date ka data remove — aaj ka data safe rahe
+    sb.table("attendance_logs").delete().neq("date", filters["date"]).execute()
+    print("🗑️ Purani date ka data remove — aaj ka data safe...")
     for i in range(0, len(all_recs), 100):
         batch = all_recs[i:i+100]
         sb.table("attendance_logs").upsert(batch, on_conflict="id").execute()

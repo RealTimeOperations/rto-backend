@@ -70,9 +70,10 @@ def run_cycle():
         all_recs += [clean_record(r) for r in more]
         time.sleep(0.4)
 
-    # ---- 3) Supabase upload
+    # ---- 3) Supabase upload (incremental: sirf PURANI date delete, aaj ka data safe)
     from supabase import create_client
     sb = create_client(AS.SUPABASE_URL, AS.SUPABASE_KEY)
+    sb.table("attendance_logs").delete().neq("date", filters["date"]).execute()
     for i in range(0, len(all_recs), 100):
         sb.table("attendance_logs").upsert(all_recs[i:i+100], on_conflict="id").execute()
 
