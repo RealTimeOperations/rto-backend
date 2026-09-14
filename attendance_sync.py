@@ -7,7 +7,7 @@ Usage:
   python attendance_sync.py            # daily sync
 """
 import os, sys, json, time, requests
-from datetime import datetime
+from datetime import datetime, timezone
 from dotenv import load_dotenv
 load_dotenv()
 from portal_client import login, base_headers, sign_headers, API_URL
@@ -15,8 +15,35 @@ from portal_client import login, base_headers, sign_headers, API_URL
 SUPABASE_URL = os.getenv('SUPABASE_URL', '').rstrip('/')
 SUPABASE_KEY = os.getenv('SUPABASE_SERVICE_ROLE_KEY') or os.getenv('SUPABASE_ANON_KEY', '')
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
 SLUG = "sw-attendance-logs"
+
+# ============================================================================
+# ✅ HEARTBEAT — frontend (Attendance Dashboard) live status ke liye
+#    status: running | portal_error | stopped
+# ============================================================================
+_sb_client = None
+
+def _sb():
+    global _sb_client
+    if _sb_client is None:
+        from supabase import create_client
+        _sb_client = create_client(SUPABASE_URL, SUPABASE_KEY)
+    return _sb_client
+
+def heartbeat(status, message=None):
+    """Frontend ke liye health status likho (system_heartbeat table)"""
+    try:
+        _sb().table("system_heartbeat").upsert(
+            {
+                "id": 1,
+                "status": status,
+                "message": message,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            },
+            on_conflict="id",
+        ).execute()
+    except Exception as e:
+        print(f"⚠️ Heartbeat update fail: {e}")
 MODULE_ID = 81
 REQUESTING_URL = "/solid-waste/view/sw-attendance-logs"
 

@@ -43,12 +43,19 @@ def sync_attendance():
 
 @app.post("/sync/employees")
 def sync_employees():
-    """Manual trigger: Assigned employees fetch + Supabase upload"""
+    """Manual trigger: Assigned employees fetch + Supabase upload
+    Returns status: updated | no_change (frontend ko result batane ke liye)"""
+    import json as _json
+    from supabase import create_client
+    sb = create_client(attendance_sync.SUPABASE_URL, attendance_sync.SUPABASE_KEY)
+    before = sb.table("assigned_employees").select("*").order("id", desc=False).execute().data
     try:
         employees_sync.main()
-        return {"success": True, "message": "Employees sync completed"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    after = sb.table("assigned_employees").select("*").order("id", desc=False).execute().data
+    changed = _json.dumps(before, sort_keys=True, default=str) != _json.dumps(after, sort_keys=True, default=str)
+    return {"success": True, "status": "updated" if changed else "no_change", "count": len(after)}
 
 if __name__ == "__main__":
     import uvicorn

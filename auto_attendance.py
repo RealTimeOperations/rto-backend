@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import attendance_sync as AS
-from attendance_sync import BASE_FILTERS, clean_record, fetch_page
+from attendance_sync import BASE_FILTERS, clean_record, fetch_page, heartbeat
 
 PAUSE_SECONDS = 10      # ✅ Har check ke baad pause
 ERROR_BACKOFF = 30      # ✅ Error par 30 sec ruke
@@ -45,6 +45,7 @@ def run_cycle():
 
     # ---- 1) Light check: page 1 + total (change detection)
     recs, total = fetch_page(_state["token"], _state["office_id"], _state["designation_id"], filters, page=1, size=500)
+    heartbeat("running")   # ✅ Portal respond kar raha — process zinda hai
     sig = [{"id": r.get("id"), "c": r.get("created_at"), "u": r.get("updated_at")} for r in recs]
     fp = hashlib.md5((str(total) + json.dumps(sig, sort_keys=True, ensure_ascii=False)).encode()).hexdigest()
 
@@ -87,6 +88,7 @@ def main():
     log("=" * 60)
     log("🟢 ATTENDANCE AUTO SYNC START (har 10 sec check)")
     log("=" * 60)
+    heartbeat("running")   # ✅ Process start — frontend ko foran pata chale
     while True:
         try:
             run_cycle()
@@ -94,9 +96,11 @@ def main():
             time.sleep(PAUSE_SECONDS)
         except KeyboardInterrupt:
             log("🛑 User ne band kiya (Ctrl+C)")
+            heartbeat("stopped", "Process stopped by user")
             break
         except Exception as e:
             log(f"❌ Error: {e} — re-login + {ERROR_BACKOFF}s backoff")
+            heartbeat("portal_error", f"Error in Data Fetching: {str(e)[:120]}")
             _state["token"] = None
             time.sleep(ERROR_BACKOFF)
 
