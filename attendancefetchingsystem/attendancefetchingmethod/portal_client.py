@@ -10,7 +10,8 @@ import hmac
 import requests
 from urllib.parse import urlparse, parse_qs
 from dotenv import load_dotenv
-load_dotenv()
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+load_dotenv(os.path.join(ROOT_DIR, ".env"))
 
 CNIC = os.getenv('CNIC', '6110120068569')
 PASSWORD = os.getenv('PASSWORD', 'Bwn@2026')

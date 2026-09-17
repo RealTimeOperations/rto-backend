@@ -9,12 +9,16 @@ Usage:
 import os, sys, json, time, requests
 from datetime import datetime, timezone
 from dotenv import load_dotenv
-load_dotenv()
-from portal_client import login, base_headers, sign_headers, API_URL
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+load_dotenv(os.path.join(ROOT_DIR, ".env"))
+try:
+    from .portal_client import login, base_headers, sign_headers, API_URL
+except ImportError:
+    from portal_client import login, base_headers, sign_headers, API_URL
 
 SUPABASE_URL = os.getenv('SUPABASE_URL', '').rstrip('/')
 SUPABASE_KEY = os.getenv('SUPABASE_SERVICE_ROLE_KEY') or os.getenv('SUPABASE_ANON_KEY', '')
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))   # method folder (schema sql yahan banti hai)
 SLUG = "sw-attendance-logs"
 
 # ============================================================================

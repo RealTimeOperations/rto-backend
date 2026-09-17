@@ -7,9 +7,12 @@ import time
 from datetime import datetime
 from dotenv import load_dotenv
 from supabase import create_client
-from portal_client import login, get_item_listing
-
-load_dotenv()
+try:
+    from .portal_client import login, get_item_listing
+except ImportError:
+    from portal_client import login, get_item_listing
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+load_dotenv(os.path.join(ROOT_DIR, ".env"))
 
 SUPABASE_URL = os.getenv('SUPABASE_URL', '').rstrip('/')
 SUPABASE_KEY = os.getenv('SUPABASE_SERVICE_ROLE_KEY') or os.getenv('SUPABASE_ANON_KEY', '')
