@@ -179,10 +179,23 @@ def main():
             heartbeat("stopped", "Process stopped by user")
             break
         except Exception as e:
-            log(f"Error: {e} - re-login + backoff", new_cycle=True)
-            heartbeat("portal_error", f"Error in Data Fetching: {str(e)[:120]}")
+            err_str = str(e).lower()
+            # Simplify network, HTTP, and login errors for the frontend notification
+            keywords = [
+                "timed out", "timeout", "connection", "login failed",
+                "500 server error", "internal server error", "502 bad gateway",
+                "503 service unavailable", "504 gateway timeout", "404 not found",
+                "403 forbidden", "401 unauthorized"
+            ]
+            if any(kw in err_str for kw in keywords):
+                hb_msg = "Error in Data Fetching: Portal Issue"
+            else:
+                hb_msg = f"Error in Data Fetching: {str(e)[:120]}"
+            
+            log(f"❌ Error: {e} - re-login + {ERROR_BACKOFF}s backoff")
+            heartbeat("portal_error", hb_msg)
             _state["token"] = None
-            time.sleep(STARTUP_BACKOFF if not _ever_logged else ERROR_BACKOFF)
+            time.sleep(ERROR_BACKOFF)
 
 
 if __name__ == "__main__":
