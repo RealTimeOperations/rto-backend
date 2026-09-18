@@ -51,6 +51,7 @@ SERVER_HEALTH_URL = "http://localhost:8000/health"
 _state = {"token": None, "office_id": None, "designation_id": None}
 _ever_logged = False
 _last_server_check = 0.0
+_started_sent = False   # "started" heartbeat sirf pehle successful cycle par jata hai
 
 _cycle_lines = []   # lines of the current cycle (old cycles are removed)
 
@@ -120,7 +121,14 @@ def run_cycle():
 
     # ---- 1) Light check: page 1 + total (change detection)
     recs, total = fetch_page(_state["token"], _state["office_id"], _state["designation_id"], filters, page=1, size=500)
-    heartbeat("running")   # portal responded - process is alive
+    # First successful cycle after process start = "started" event (frontend notification);
+    # all later cycles = "running" (alive signal only)
+    global _started_sent
+    if not _started_sent:
+        heartbeat("started", "Server Started")
+        _started_sent = True
+    else:
+        heartbeat("running")
     sig = [{"id": r.get("id"), "c": r.get("created_at"), "u": r.get("updated_at")} for r in recs]
     fp = hashlib.md5((str(total) + json.dumps(sig, sort_keys=True, ensure_ascii=False)).encode()).hexdigest()
 
