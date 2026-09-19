@@ -61,6 +61,7 @@ if sys.stdout is None or sys.stderr is None:
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from attendancefetchingsystem.attendancefetchingmethod import attendance_sync, employees_sync
+from containerfetchingsystem.containerlogs.containers_api import containers_router
 
 ATT_LOG = os.path.join(LOGS_DIR, "auto_attendance.log")
 EMP_LOG = os.path.join(LOGS_DIR, "employees_sync.log")
@@ -69,6 +70,7 @@ PYTHON_EXE = sys.executable  # hidden-console python (same behavior as terminal)
 AUTO_SCRIPT = os.path.join(METHOD_DIR, "auto_attendance.py")
 
 app = FastAPI(title="RTO Attendance & HR Sync API")
+app.include_router(containers_router)
 
 # CORS (allow calls from the frontend)
 app.add_middleware(

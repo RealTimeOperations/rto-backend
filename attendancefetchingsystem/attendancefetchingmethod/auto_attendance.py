@@ -165,6 +165,7 @@ def run_cycle():
         f.write(fp)
 
     log(f"Data fetched ({filters['date']}) - {len(all_recs)} records uploaded to Supabase ({time.time() - t0:.1f}s)")
+    heartbeat("data_updated", "Data successfully updated")
     return "updated"
 
 
@@ -201,7 +202,7 @@ def main():
                 hb_msg = f"Error in Data Fetching: {str(e)[:120]}"
             
             log(f"❌ Error: {e} - re-login + {ERROR_BACKOFF}s backoff")
-            heartbeat("portal_error", hb_msg)
+            heartbeat("portal_error", "Error: Portal Issue")
             _state["token"] = None
             time.sleep(ERROR_BACKOFF)
 

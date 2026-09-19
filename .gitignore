@@ -12,7 +12,8 @@ venv/
 # Runtime state files (attendancelogs folder mein banti hain)
 .attendance_fingerprint
 .attendance.pid
-
+containers.pid
+.containers_fingerprint
 # IDE
 .vscode/
 .idea/
