@@ -1,8 +1,8 @@
 """
 Penalties Fetch Logs API — heartbeat id = 3.
-Historical mode: PAUSE-FLAG + alag table (penaltiesdata_hist) —
-main table (penaltiesdata) kabhi rewrite nahi hoti, is liye baqi devices
-par today ka last-updated data safe rehta hai.
+✅ Historical mode REMOVE (koi pause flag / hist table nahi).
+✅ Naya stateless endpoint: /penalties/imposed-report — kisi bhi date ki rows
+   SIRF response mein return hoti hain (koi DB write nahi, auto-sync affect nahi).
 """
 import os
 import subprocess
@@ -19,10 +19,8 @@ BASE_DIR = os.path.dirname(SYS_DIR)
 METHOD_DIR = os.path.join(SYS_DIR, "penaltiesfetchingmethod")
 LOG_FILE = os.path.join(LOGS_DIR, "penalties_auto.log")
 PID_FILE = os.path.join(LOGS_DIR, "penalties.pid")
-PAUSE_FILE = os.path.join(LOGS_DIR, ".penalties_paused")
 
 _SB = None
-
 
 def _sb():
     global _SB
@@ -31,7 +29,6 @@ def _sb():
         from attendancefetchingsystem.attendancefetchingmethod import attendance_sync as ATT
         _SB = create_client(ATT.SUPABASE_URL, ATT.SUPABASE_KEY)
     return _SB
-
 
 def _pid_alive(pid: int) -> bool:
     if os.name == "nt":
@@ -55,7 +52,6 @@ def _pid_alive(pid: int) -> bool:
     except OSError:
         return False
 
-
 def _running_pid():
     try:
         with open(PID_FILE, "r") as f:
@@ -65,7 +61,6 @@ def _running_pid():
     except Exception:
         pass
     return None
-
 
 def _kill_pid(pid: int):
     try:
@@ -83,7 +78,6 @@ def _kill_pid(pid: int):
     except Exception:
         pass
 
-
 def _heartbeat(status: str, message: str = ""):
     try:
         _sb().table("system_heartbeat").upsert({
@@ -92,7 +86,6 @@ def _heartbeat(status: str, message: str = ""):
         }).execute()
     except Exception:
         pass
-
 
 def _start_auto_process():
     script = os.path.join(METHOD_DIR, "penalties_auto.py")
@@ -120,12 +113,10 @@ def _start_auto_process():
             return True
     return _running_pid() is not None
 
-
 @penalties_router.get("/status")
 def penalties_status():
     pid = _running_pid()
     return {"running": pid is not None, "pid": pid}
-
 
 @penalties_router.get("/logs")
 def penalties_logs():
@@ -138,7 +129,6 @@ def penalties_logs():
     pid = _running_pid()
     return {"running": pid is not None, "pid": pid, "lines": lines}
 
-
 @penalties_router.post("/start")
 def penalties_start():
     if _running_pid():
@@ -146,7 +136,6 @@ def penalties_start():
     if _start_auto_process():
         return {"ok": True, "message": "Penalties server started", "pid": _running_pid()}
     return {"ok": False, "message": "Start failed - check penalties_auto.log"}
-
 
 @penalties_router.post("/stop")
 def penalties_stop():
@@ -167,16 +156,17 @@ def penalties_stop():
     _heartbeat("penalties_stopped", "Server Stopped")
     return {"ok": True, "message": "Penalties server stopped"}
 
-
 @penalties_router.post("/mark-stopped")
 def penalties_mark_stopped():
     _heartbeat("penalties_stopped", "Process stopped from stop script")
     return {"ok": True}
 
-
-@penalties_router.post("/fetch-date")
-def penalties_fetch_date(req: dict):
-    """Historical date: pause flag + data sirf penaltiesdata_hist mein (main table safe)."""
+@penalties_router.post("/imposed-report")
+def penalties_imposed_report(req: dict):
+    """✅ STATELESS on-demand fetch: kisi bhi (purani) date ki penalties rows return karo.
+    - Koi DB write NAHI, koi pause flag NAHI — auto-sync process bilkul affect nahi hota
+    - Data sirf HTTP response mein jata hai (frontend memory mein temporary rakhta hai)
+    """
     date_str = str((req or {}).get("date") or "").strip()
     if not date_str:
         return {"ok": False, "message": "Date required"}
@@ -184,48 +174,15 @@ def penalties_fetch_date(req: dict):
         datetime.strptime(date_str, "%Y-%m-%d")
     except ValueError:
         return {"ok": False, "message": "Invalid date format (YYYY-MM-DD)"}
-
-    # 1) Pause flag — auto process agla cycle skip kare (process zinda rehta hai)
-    try:
-        with open(PAUSE_FILE, "w", encoding="utf-8") as f:
-            f.write(date_str)
-    except Exception as e:
-        return {"ok": False, "message": f"Pause flag write failed: {e}"}
-    _heartbeat("paused_for_fetch", f"Fetching historical data for {date_str}")
-
-    # 2) Portal se us date ka data → ALAG table mein (baki devices affect nahi hote)
+    if date_str > datetime.now().strftime("%Y-%m-%d"):
+        return {"ok": False, "message": "Future date allowed nahi"}
     try:
         from penaltiesfetchingsystem.penaltiesfetchingmethod import penalties_portal as PP
         token, office_id, designation_id = PP.login()
         rows = PP.fetch_penalties_report(token, office_id, designation_id, custom_date=date_str)
         mapped = PP.map_records(rows)
-        sb = _sb()
-        sb.table("penaltiesdata_hist").delete().neq("id", "").execute()
-        for i in range(0, len(mapped), 100):
-            sb.table("penaltiesdata_hist").upsert(mapped[i:i + 100], on_conflict="id").execute()
-        _heartbeat("date_data_ready", f"Historical data for {date_str} loaded ({len(mapped)} records)")
-        return {"ok": True, "message": f"Fetched {len(mapped)} penalties for {date_str}", "count": len(mapped)}
+        for m in mapped:
+            m.pop("raw", None)   # payload halka rakho
+        return {"ok": True, "date": date_str, "count": len(mapped), "rows": mapped}
     except Exception as e:
-        try:
-            os.remove(PAUSE_FILE)
-        except Exception:
-            pass
-        _heartbeat("fetch_date_error", f"Error: {e}")
         return {"ok": False, "message": f"Fetch failed: {e}"}
-
-
-@penalties_router.post("/reset")
-def penalties_reset():
-    """Pause flag remove + hist table clear + auto sync resume (today ka data wapis)."""
-    try:
-        os.remove(PAUSE_FILE)
-    except Exception:
-        pass
-    try:
-        _sb().table("penaltiesdata_hist").delete().neq("id", "").execute()
-    except Exception:
-        pass
-    if not _running_pid():
-        _start_auto_process()
-    _heartbeat("penalties_started", "Server Started (reset)")
-    return {"ok": True, "message": "Reset complete - today's data restored, auto sync resumed"}

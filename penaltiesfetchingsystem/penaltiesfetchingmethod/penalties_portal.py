@@ -1,6 +1,7 @@
 """
 Penalties Portal Fetcher — Suthra portal se contractor-penalties listing.
 Sirf TEHSIL HAROONABAD (tehsil_id=4) + sirf CURRENT DATE ki penalties.
+✅ Added custom_date support for on-demand historical fetch.
 """
 import os
 import sys
@@ -15,7 +16,6 @@ from attendancefetchingsystem.attendancefetchingmethod import portal_client as P
 
 LISTING_URL = PC.API_URL + "/autoform/get-item-listing"
 REFERER = "https://suthra.punjab.gov.pk/penalty-management/view/contractor-penalties"
-
 TEHSIL_HAROONABAD = 4
 
 COLS = [
@@ -35,7 +35,7 @@ COLS = [
     {"key": "tat", "column": True, "value": "Tat"},
     {"key": "added_by", "column": True, "value": "Added By"},
     {"key": "lat_long", "column": True, "value": "Lat Long"},
-    {"key": "created_date_time", "column": True, "value": "Created Date&Time"},
+    {"key": "created_date_time", "column": True, "value": "Created Date &Time"},
     {"key": "uc", "column": True, "value": "UC"},
     {"key": "remarks", "column": True, "value": "Remarks"},
     {"key": "in_grevience", "column": True, "value": "In Grevience"},
@@ -46,14 +46,10 @@ COLS = [
     {"key": "action", "column": True, "value": "Action"},
 ]
 
-
 def login():
     return PC.login()
 
-
 def extract_records(d):
-    """Poore response mein records ki list dhoondho (BFS) —
-    'data' mein user profile ho ya records kahin bhi hon, list of dicts milay gi."""
     pref = ["records", "rows", "items", "listing", "list", "results", "result", "content", "items_list", "data"]
     q = deque([d])
     seen = set()
@@ -75,7 +71,7 @@ def extract_records(d):
                     q.append(v)
     return []
 
-
+# ✅ custom_date added
 def _payload(page, with_date, custom_date=None):
     target_date = custom_date if custom_date else datetime.now().strftime("%Y-%m-%d")
     filters = {
@@ -102,10 +98,9 @@ def _payload(page, with_date, custom_date=None):
         "user_type": "contractor",
     }
 
-
 LAST_RAW = {"text": ""}
 
-
+# ✅ custom_date added
 def _fetch_page(token, office_id, designation_id, page, with_date, custom_date=None):
     body = json.dumps(_payload(page, with_date, custom_date), separators=(",", ":"))
     h = PC.base_headers()
@@ -119,9 +114,8 @@ def _fetch_page(token, office_id, designation_id, page, with_date, custom_date=N
     LAST_RAW["text"] = r.text
     return extract_records(r.json())
 
-
+# ✅ target_date support added
 def _is_target_date(rec, target_date=None):
-    """Record ki penalty_date target date ki hai ya nahi (flexible formats)."""
     v = ""
     for k in rec.keys():
         kl = str(k).strip().lower()
@@ -130,7 +124,10 @@ def _is_target_date(rec, target_date=None):
             break
     if not v:
         return True
+    
+    # ✅ Agar target_date diya gaya hai to usay use karo, warna aaj ka din
     check_date = datetime.strptime(target_date, "%Y-%m-%d") if target_date else datetime.now()
+    
     vv = v.strip()
     cands = [
         check_date.strftime("%Y-%m-%d"),
@@ -144,10 +141,11 @@ def _is_target_date(rec, target_date=None):
             return True
     return False
 
-
+# ✅ custom_date added
 def fetch_penalties_report(token, office_id, designation_id, custom_date=None):
     out = []
     used_date = None
+    
     for with_date in (True, False):
         out = []
         page = 1
@@ -166,15 +164,17 @@ def fetch_penalties_report(token, office_id, designation_id, custom_date=None):
         if out:
             used_date = with_date
             break
+    
     if not out:
         print("RAW RESPONSE (first 1500 chars):", LAST_RAW["text"][:1500])
         return []
+    
     total = len(out)
+    # ✅ Filter karte waqt custom_date pass karo
     out = [r for r in out if _is_target_date(r, custom_date)]
     date_label = custom_date if custom_date else "today"
     print(f"Fetched {total} penalties (date_filter={used_date}) -> {date_label}: {len(out)} (Tehsil Haroonabad)")
     return out
-
 
 def _g(rec, *names):
     for n in names:
@@ -184,20 +184,18 @@ def _g(rec, *names):
                 return "" if v is None else str(v).strip()
     return ""
 
-
 def _num(v):
     try:
         return float(str(v).replace(",", "").strip() or 0)
     except Exception:
         return 0.0
 
-
 def map_records(recs):
     out = []
     now = datetime.now().isoformat()
     for rec in recs:
         uid = _g(rec, "unique_id") or str(_g(rec, "id"))
-        # Lat/Lon "coordinates" string se: "29.4780955,73.0225572"
+        
         coords = _g(rec, "coordinates")
         lat = lon = 0.0
         if coords and "," in coords:
@@ -207,9 +205,11 @@ def map_records(recs):
                 lon = float(parts[1].strip())
             except Exception:
                 lat = lon = 0.0
+        
         grev_remarks = _g(rec, "grevience_remarks")
         grev_time = _g(rec, "grevience_date_time")
         in_grev = "Yes" if (grev_remarks or grev_time) else "No"
+        
         out.append({
             "id": uid,
             "sr_no": _g(rec, "sr_no"),
