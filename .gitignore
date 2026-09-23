@@ -14,6 +14,8 @@ venv/
 .attendance.pid
 containers.pid
 .containers_fingerprint
+.penalties_fingerprint
+penalties.pid
 # IDE
 .vscode/
 .idea/
