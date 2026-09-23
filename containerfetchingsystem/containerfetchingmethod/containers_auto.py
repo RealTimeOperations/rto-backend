@@ -119,7 +119,7 @@ def run_cycle():
     mapper = getattr(CP, "map_records", None)
     mapped = mapper(rows) if callable(mapper) else map_rows(rows)
 
-    fp = json.dumps(mapped, sort_keys=True, default=str)
+    fp = json.dumps([{k: v for k, v in m.items() if k != "fetched_at"} for m in mapped], sort_keys=True, default=str)
     old = ""
     if os.path.exists(FP_FILE):
         try:
