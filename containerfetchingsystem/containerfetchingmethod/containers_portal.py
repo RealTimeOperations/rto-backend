@@ -89,5 +89,6 @@ def map_records(recs):
             "serviced_by_tracker": norm_yesno(rec.get("stop_point_serviced")),
             "app_vehicle": str(rec.get("app_vehicle") or rec.get("stop_point_vehicle") or "").strip(),
             "app_date_time": str(rec.get("app_datetime") or rec.get("stop_point_datetime") or "").strip(),
+            "fetched_at": datetime.now().isoformat(),
         })
     return mapped

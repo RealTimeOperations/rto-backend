@@ -119,6 +119,12 @@ def run_cycle():
     mapper = getattr(CP, "map_records", None)
     mapped = mapper(rows) if callable(mapper) else map_rows(rows)
 
+    # ✅ fetched_at har upsert par fresh karo (frontend pill + notification ka SAME time source)
+    #    (fp computation fetched_at ko exclude karta hai, is liye fingerprint affect nahi hota)
+    _now = datetime.now().isoformat()
+    for _m in mapped:
+        _m["fetched_at"] = _now
+
     fp = json.dumps([{k: v for k, v in m.items() if k != "fetched_at"} for m in mapped], sort_keys=True, default=str)
     old = ""
     if os.path.exists(FP_FILE):
