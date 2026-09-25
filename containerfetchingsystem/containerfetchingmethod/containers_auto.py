@@ -119,12 +119,8 @@ def run_cycle():
     mapper = getattr(CP, "map_records", None)
     mapped = mapper(rows) if callable(mapper) else map_rows(rows)
 
-    # ✅ fetched_at har upsert par fresh karo (frontend pill + notification ka SAME time source)
-    #    (fp computation fetched_at ko exclude karta hai, is liye fingerprint affect nahi hota)
-    _now = datetime.now().isoformat()
-    for _m in mapped:
-        _m["fetched_at"] = _now
-
+    # ✅ Fingerprint = SIRF asal data (fetched_at exclude) → data same ho to "no_change"
+    #    → heartbeat "containers_running" likhe ga → frontend pill PURANI time par rahe gi
     fp = json.dumps([{k: v for k, v in m.items() if k != "fetched_at"} for m in mapped], sort_keys=True, default=str)
     old = ""
     if os.path.exists(FP_FILE):
@@ -135,6 +131,11 @@ def run_cycle():
     if fp == old:
         log(f"No data update - No new records on portal ({time.time() - t0:.1f}s)", new_cycle=True)
         return "no_change"
+    # ✅ fetched_at SIRF tab refresh karo jab asal data change hua ho
+    #    → DB ka time = sacha last-data-update time → frontend pill + notification SAME time
+    _now = datetime.now().isoformat()
+    for _m in mapped:
+        _m["fetched_at"] = _now
 
     for i in range(0, len(mapped), 100):
         SB.table("conatnersportaldata").upsert(mapped[i:i + 100], on_conflict="site").execute()

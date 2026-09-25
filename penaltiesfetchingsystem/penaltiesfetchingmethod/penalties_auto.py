@@ -81,19 +81,23 @@ def run_cycle():
     token, office_id, designation_id = PP.login()
     rows = PP.fetch_penalties_report(token, office_id, designation_id)
     mapped = PP.map_records(rows)
-    
-    fp = json.dumps(mapped, sort_keys=True, default=str)
-    
+    # ✅ Fingerprint = SIRF asal data (fetched_at exclude) → data same ho to "no_change"
+    #    → heartbeat "penalties_running" likhe gi → frontend pill PURANI time par rahe gi
+    fp = json.dumps([{k: v for k, v in m.items() if k != "fetched_at"} for m in mapped], sort_keys=True, default=str)
     old = ""
     if os.path.exists(FP_FILE):
         try:
             old = open(FP_FILE, encoding="utf-8").read()
         except Exception:
             old = ""
-    
     if fp == old:
         log(f"No data update - No new records on portal ({time.time() - t0:.1f}s)", new_cycle=True)
         return "no_change"
+    # ✅ fetched_at SIRF tab refresh karo jab asal data change hua ho
+    #    → DB ka time = sacha last-data-update time → frontend pill + notification SAME time
+    _now = datetime.now().isoformat()
+    for _m in mapped:
+        _m["fetched_at"] = _now
     
     # ✅ SYNC-DELETE: portal se ghayab penalties + purani date ka data remove
     today = datetime.now().strftime("%Y-%m-%d")
