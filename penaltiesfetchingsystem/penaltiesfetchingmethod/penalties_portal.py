@@ -70,6 +70,107 @@ def extract_records(d):
                 if isinstance(v, (list, dict)):
                     q.append(v)
     return []
+# ================= Attachments (FMO images) =================
+_IMAGE_EXT = (".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp")
+
+def _norm_url(u):
+    u = str(u or "").strip().strip('"')
+    if not u or len(u) > 600:
+        return ""
+    if u.startswith("http://") or u.startswith("https://"):
+        return u
+    if u.startswith("//"):
+        return "https:" + u
+    return "https://suthra.punjab.gov.pk/" + u.lstrip("/")
+
+def _looks_like_image(s):
+    s = str(s or "").lower()
+    return s.endswith(_IMAGE_EXT) or ("image" in s) or ("attach" in s) or ("storage" in s) or ("upload" in s)
+
+def _collect_urls(v, out):
+    if isinstance(v, str):
+        # ✅ Comma-joined strings bhi handle karo (portal "url1,/path2" format bhejta hai)
+        for piece in str(v).split(','):
+            piece = piece.strip()
+            if piece and _looks_like_image(piece):
+                u = _norm_url(piece)
+                if u:
+                    out.append(u)
+    elif isinstance(v, dict):
+        hit = None
+        for k in ("url", "file_url", "path", "file_path", "src", "link", "file", "name", "original_name", "title"):
+            val = v.get(k)
+            if isinstance(val, str) and _looks_like_image(val):
+                hit = _norm_url(val)
+                break
+        if hit:
+            out.append(hit)
+        else:
+            for vv in v.values():
+                _collect_urls(vv, out)
+    elif isinstance(v, list):
+        for item in v:
+            _collect_urls(item, out)
+
+def _extract_attachments(node, out, depth=0):
+    if depth > 7 or node is None:
+        return out
+    if isinstance(node, dict):
+        for k, v in node.items():
+            kl = str(k).lower()
+            if any(t in kl for t in ("attach", "image", "photo", "media", "document", "file")):
+                _collect_urls(v, out)
+            else:
+                _extract_attachments(v, out, depth + 1)
+    elif isinstance(node, list):
+        for item in node:
+            _extract_attachments(item, out, depth + 1)
+    return out
+
+def extract_attachments(node):
+    out = _extract_attachments(node, [], 0)
+    seen = set()
+    ded = []
+    for u in out:
+        if u not in seen:
+            seen.add(u)
+            ded.append(u)
+    return ded
+
+DETAIL_PATHS = [
+    "/autoform/get-item-detail",
+    "/autoform/get-item",
+    "/autoform/get-detail",
+    "/penalty-management/get-penalty-detail",
+    "/penalty-management/get-penalty",
+]
+
+def fetch_penalty_detail(token, office_id, designation_id, penalty_id):
+    """Portal se single penalty detail (attachments ke liye) — auto-sync mein EK dafa call hoti hai."""
+    for path in DETAIL_PATHS:
+        url = PC.API_URL + path
+        for payload in (
+            {"slug": "contractor-penalties", "id": str(penalty_id), "module_id": 145},
+            {"slug": "contractor-penalties", "id": str(penalty_id)},
+            {"id": str(penalty_id)},
+        ):
+            body = json.dumps(payload, separators=(",", ":"))
+            h = PC.base_headers()
+            h["Referer"] = "https://suthra.punjab.gov.pk/penalty-management/view-penalty/" + str(penalty_id)
+            h["Authorization"] = "Bearer " + token
+            h["Active-Office-Id"] = str(office_id)
+            h["Active-Designation-Id"] = str(designation_id)
+            h.update(PC.sign_headers("POST", url, body, token))
+            try:
+                r = requests.post(url, data=body, headers=h, timeout=30)
+                if r.status_code != 200:
+                    continue
+                d = r.json()
+                if isinstance(d, (dict, list)) and _extract_attachments(d, [], 0):
+                    return d
+            except Exception:
+                continue
+    return None
 
 # ✅ custom_date added
 def _payload(page, with_date, custom_date=None):
@@ -240,6 +341,7 @@ def map_records(recs):
             "grevience_decisions": _g(rec, "finalized_grevience_remarks"),
             "final_action_time": _g(rec, "final_date_time") or _g(rec, "finalized_grevience_date_time"),
             "can_auto_imposed": _g(rec, "is_auto_imposed"),
+            "attachments": extract_attachments(rec),
             "raw": rec,
             "fetched_at": now,
         })

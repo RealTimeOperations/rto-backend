@@ -38,6 +38,80 @@ from supabase import create_client
 
 SB = create_client(ATT.SUPABASE_URL, ATT.SUPABASE_KEY)
 CHECK_SECONDS = 15
+
+# ✅ Image disk cache — SAME folder + SAME key scheme jo /attachment-image proxy use karta hai,
+#    taake auto-sync ki cached images proxy ko foran mil jayein (eye button = instant)
+import hashlib
+CACHE_DIR = os.path.join(LOGS_DIR, "imagecache")
+os.makedirs(CACHE_DIR, exist_ok=True)
+
+def _cache_paths(url):
+    key = hashlib.sha256(url.encode("utf-8")).hexdigest()
+    return os.path.join(CACHE_DIR, key + ".bin"), os.path.join(CACHE_DIR, key + ".ctype")
+
+def _is_cached(url):
+    b, _ = _cache_paths(url)
+    try:
+        return os.path.exists(b) and os.path.getsize(b) > 0
+    except Exception:
+        return False
+
+def _sniff_ctype(data, header_ct):
+    ct = (header_ct or "").split(";")[0].strip().lower()
+    if ct.startswith("image/"):
+        return ct
+    b = data[:8]
+    if b[:3] == b"\xff\xd8\xff": return "image/jpeg"
+    if b[:4] == b"\x89PNG": return "image/png"
+    if b[:3] == b"GIF": return "image/gif"
+    if b[:4] == b"RIFF": return "image/webp"
+    return ""
+
+def prefetch_images(urls, token=None, limit=12):
+    """✅ Background mein images PARALLEL download kar ke disk cache mein rakho (4 workers)."""
+    import requests
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    todo = []
+    for u in urls:
+        if len(todo) >= limit:
+            break
+        if not _is_cached(u):
+            todo.append(u)
+    if not todo:
+        return 0
+    hdrs = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+        "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+        "Referer": PP.REFERER,
+        "Origin": "https://suthra.punjab.gov.pk",
+    }
+    def _one(u):
+        try:
+            r = requests.get(u, headers=hdrs, timeout=45, allow_redirects=True)
+            if r.status_code in (401, 403) and token:
+                h2 = dict(hdrs)
+                h2["Authorization"] = "Bearer " + token
+                r = requests.get(u, headers=h2, timeout=45, allow_redirects=True)
+            if r.status_code != 200 or not r.content:
+                return False
+            ct = _sniff_ctype(r.content, r.headers.get("Content-Type"))
+            if not ct:
+                return False
+            bb, mm = _cache_paths(u)
+            with open(bb, "wb") as f:
+                f.write(r.content)
+            with open(mm, "w", encoding="utf-8") as f:
+                f.write(ct)
+            return True
+        except Exception:
+            return False
+    n = 0
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        futs = [ex.submit(_one, u) for u in todo]
+        for f in as_completed(futs):
+            if f.result():
+                n += 1
+    return n
 _CYCLE = []
 
 def log(msg, new_cycle=False):
@@ -81,9 +155,48 @@ def run_cycle():
     token, office_id, designation_id = PP.login()
     rows = PP.fetch_penalties_report(token, office_id, designation_id)
     mapped = PP.map_records(rows)
+    # ✅ Attachments (FMO images): raw mein na hon to portal detail se EK dafa fetch kar ke DB mein store karo
+    #    (next date ka data aane par sync-delete + upsert se ye khud rewrite ho jati hain)
+    try:
+        need = [m for m in mapped if not m.get("attachments")]
+        if need:
+            have = {}
+            try:
+                ex = SB.table("penaltiesdata").select("id, attachments").in_("id", [m["id"] for m in need]).execute()
+                have = {r["id"]: (r.get("attachments") or []) for r in (ex.data or [])}
+            except Exception:
+                have = {}
+            fetched_cnt = 0
+            for m in need:
+                if have.get(m["id"]):
+                    m["attachments"] = have[m["id"]]
+                    continue
+                if fetched_cnt >= 10:
+                    continue
+                num = (m.get("raw") or {}).get("id") or m["id"]
+                det = PP.fetch_penalty_detail(token, office_id, designation_id, num)
+                m["attachments"] = PP.extract_attachments(det) if det else []
+                fetched_cnt += 1
+    except Exception as e:
+        log(f"Warning: attachments enrichment failed: {e}")
     # ✅ Fingerprint = SIRF asal data (fetched_at exclude) → data same ho to "no_change"
     #    → heartbeat "penalties_running" likhe gi → frontend pill PURANI time par rahe gi
     fp = json.dumps([{k: v for k, v in m.items() if k != "fetched_at"} for m in mapped], sort_keys=True, default=str)
+    # ✅ BACKGROUND PRE-CACHE: portal se attachments aate hi images khud cache ho jati hain
+    #    (har cycle max 4 nayi images → portal par load bhi nahi parta, user ko pata bhi nahi chalta)
+    try:
+        pending = []
+        for m in mapped:
+            atts = m.get("attachments") or (PP.extract_attachments(m.get("raw")) if m.get("raw") else [])
+            for u in atts:
+                if u not in pending and not _is_cached(u):
+                    pending.append(u)
+        if pending:
+            cnt = prefetch_images(pending, token=token, limit=12)
+            if cnt:
+                log(f"Image pre-cache: {cnt} images cached ({len(pending)} pending)")
+    except Exception as e:
+        log(f"Warning: image pre-cache failed: {e}")
     old = ""
     if os.path.exists(FP_FILE):
         try:
