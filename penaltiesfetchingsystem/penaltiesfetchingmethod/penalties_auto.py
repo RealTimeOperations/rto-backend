@@ -112,6 +112,7 @@ def prefetch_images(urls, token=None, limit=12):
             if f.result():
                 n += 1
     return n
+_DETAIL_TRIED = set()
 _CYCLE = []
 
 def log(msg, new_cycle=False):
@@ -158,24 +159,31 @@ def run_cycle():
     # ✅ Attachments (FMO images): raw mein na hon to portal detail se EK dafa fetch kar ke DB mein store karo
     #    (next date ka data aane par sync-delete + upsert se ye khud rewrite ho jati hain)
     try:
-        need = [m for m in mapped if not m.get("attachments")]
+        def _grp_ok(att):
+            return isinstance(att, dict) and bool(att.get("before") or att.get("after"))
+        # ✅ Refine: jis penalty ke groups mein before/after NAHI (flat/other/empty) → us ka detail lao
+        need = [m for m in mapped if not _grp_ok(m.get("attachments")) and m["id"] not in _DETAIL_TRIED]
         if need:
             have = {}
             try:
                 ex = SB.table("penaltiesdata").select("id, attachments").in_("id", [m["id"] for m in need]).execute()
-                have = {r["id"]: (r.get("attachments") or []) for r in (ex.data or [])}
+                have = {r["id"]: r.get("attachments") for r in (ex.data or [])}
             except Exception:
                 have = {}
             fetched_cnt = 0
             for m in need:
-                if have.get(m["id"]):
+                if _grp_ok(have.get(m["id"])):
                     m["attachments"] = have[m["id"]]
                     continue
                 if fetched_cnt >= 10:
                     continue
+                _DETAIL_TRIED.add(m["id"])
                 num = (m.get("raw") or {}).get("id") or m["id"]
                 det = PP.fetch_penalty_detail(token, office_id, designation_id, num)
-                m["attachments"] = PP.extract_attachments(det) if det else []
+                g = PP.extract_attachments_grouped(det) if det else {"before": [], "after": [], "other": []}
+                log(f"Attach refine {m['id']}: detail={'OK' if det else 'FAIL'} before={len(g['before'])} after={len(g['after'])} other={len(g['other'])}")
+                if g["before"] or g["after"]:
+                    m["attachments"] = g
                 fetched_cnt += 1
     except Exception as e:
         log(f"Warning: attachments enrichment failed: {e}")
@@ -187,7 +195,7 @@ def run_cycle():
     try:
         pending = []
         for m in mapped:
-            atts = m.get("attachments") or (PP.extract_attachments(m.get("raw")) if m.get("raw") else [])
+            atts = PP.att_urls(m.get("attachments")) or (PP.extract_attachments(m.get("raw")) if m.get("raw") else [])
             for u in atts:
                 if u not in pending and not _is_cached(u):
                     pending.append(u)

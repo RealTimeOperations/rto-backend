@@ -9,7 +9,7 @@ import json
 import time
 import requests
 from collections import deque
-from datetime import datetime
+from datetime import datetime, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from attendancefetchingsystem.attendancefetchingmethod import portal_client as PC
@@ -87,7 +87,7 @@ def _looks_like_image(s):
     s = str(s or "").lower()
     return s.endswith(_IMAGE_EXT) or ("image" in s) or ("attach" in s) or ("storage" in s) or ("upload" in s)
 
-def _collect_urls(v, out):
+def _collect_urls(v, out, bucket="other"):
     if isinstance(v, str):
         # ✅ Comma-joined strings bhi handle karo (portal "url1,/path2" format bhejta hai)
         for piece in str(v).split(','):
@@ -95,8 +95,17 @@ def _collect_urls(v, out):
             if piece and _looks_like_image(piece):
                 u = _norm_url(piece)
                 if u:
-                    out.append(u)
+                    out.append((bucket, u))
     elif isinstance(v, dict):
+        b = bucket
+        for k in ("type", "category", "kind", "title", "label"):
+            val = v.get(k)
+            if isinstance(val, str):
+                vl = val.lower()
+                if "before" in vl or "prior" in vl:
+                    b = "before"; break
+                if "after" in vl or "later" in vl:
+                    b = "after"; break
         hit = None
         for k in ("url", "file_url", "path", "file_path", "src", "link", "file", "name", "original_name", "title"):
             val = v.get(k)
@@ -104,38 +113,233 @@ def _collect_urls(v, out):
                 hit = _norm_url(val)
                 break
         if hit:
-            out.append(hit)
+            out.append((b, hit))
         else:
             for vv in v.values():
-                _collect_urls(vv, out)
+                _collect_urls(vv, out, b)
     elif isinstance(v, list):
         for item in v:
-            _collect_urls(item, out)
+            _collect_urls(item, out, bucket)
 
-def _extract_attachments(node, out, depth=0):
+def _extract_attachments(node, out, depth=0, bucket="other"):
     if depth > 7 or node is None:
         return out
     if isinstance(node, dict):
         for k, v in node.items():
             kl = str(k).lower()
             if any(t in kl for t in ("attach", "image", "photo", "media", "document", "file")):
-                _collect_urls(v, out)
+                _collect_urls(v, out, bucket)
+            elif "before" in kl or "prior" in kl:
+                _extract_attachments(v, out, depth + 1, "before")
+            elif "after" in kl or "later" in kl:
+                _extract_attachments(v, out, depth + 1, "after")
             else:
-                _extract_attachments(v, out, depth + 1)
+                _extract_attachments(v, out, depth + 1, bucket)
     elif isinstance(node, list):
         for item in node:
-            _extract_attachments(item, out, depth + 1)
+            _extract_attachments(item, out, depth + 1, bucket)
     return out
 
-def extract_attachments(node):
-    out = _extract_attachments(node, [], 0)
+_ATTACH_HINTS = ("attach", "image", "photo", "media", "document", "file")
+_META_HINTS = ("status", "created", "date", "time", "remark", "action", "actor", "user", "log", "assigned", "contractor", "officer", "resolved")
+
+def _has_attach_key(d):
+    return any(any(t in str(k).lower() for t in _ATTACH_HINTS) for k in d.keys())
+
+def _has_meta_key(d):
+    return any(any(t in str(k).lower() for t in _META_HINTS) for k in d.keys())
+
+def _collect_flat(v, out):
+    pairs = []
+    _collect_urls(v, pairs, "other")
+    for _b, u in pairs:
+        if u not in out:
+            out.append(u)
+
+def _log_seq(lg):
+    for k in ("sr_no", "sr", "no", "serial", "index"):
+        try:
+            return int(str(lg.get(k)).strip())
+        except Exception:
+            continue
+    return None
+
+def _log_time(lg):
+    import re
+    months = {"Jan":1,"Feb":2,"Mar":3,"Apr":4,"May":5,"Jun":6,"Jul":7,"Aug":8,"Sep":9,"Oct":10,"Nov":11,"Dec":12}
+    for k, v in lg.items():
+        if not isinstance(v, str):
+            continue
+        kl = str(k).lower()
+        if not any(t in kl for t in ("created", "date", "time")):
+            continue
+        m = re.search(r"(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})", v)
+        if m:
+            return tuple(int(x) for x in m.groups())
+        m2 = re.search(r"([A-Z][a-z]{2}) (\d{1,2}), (\d{4}), (\d{1,2}):(\d{2}):(\d{2}) (AM|PM)", v)
+        if m2:
+            hh = int(m2.group(4)) % 12 + (0 if m2.group(7) == "AM" else 12)
+            return (int(m2.group(3)), months.get(m2.group(1), 0), int(m2.group(2)), hh, int(m2.group(5)), int(m2.group(6)))
+    return None
+
+def _parse_dt(v):
+    import re
+    if not isinstance(v, str):
+        return None
+    s = v.strip()
+    m = re.search(r"(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})", s)
+    if m:
+        try:
+            return datetime(*[int(x) for x in m.groups()])
+        except Exception:
+            return None
+    m2 = re.search(r"([A-Z][a-z]{2}) (\d{1,2}), (\d{4}), (\d{1,2}):(\d{2}):(\d{2}) (AM|PM)", s)
+    if m2:
+        months = {"Jan":1,"Feb":2,"Mar":3,"Apr":4,"May":5,"Jun":6,"Jul":7,"Aug":8,"Sep":9,"Oct":10,"Nov":11,"Dec":12}
+        hh = int(m2.group(4)) % 12 + (0 if m2.group(7) == "AM" else 12)
+        try:
+            return datetime(int(m2.group(3)), months.get(m2.group(1), 1), int(m2.group(2)), hh, int(m2.group(5)), int(m2.group(6)))
+        except Exception:
+            return None
+    return None
+
+def _log_dt(lg):
+    d = _log_time(lg)
+    if d:
+        return d
+    # ✅ Fallback: entry mein kahin bhi date-string ho (key name jo bhi ho)
+    for v in lg.values():
+        if isinstance(v, str) and len(v) < 45 and ("," in v or ":" in v or "-" in v):
+            d = _parse_dt(v)
+            if d:
+                return d
+    return None
+
+def _find_base_dt(node, depth=0):
+    """✅ Penalty ka created_at dhoondo (base time — before/after faisla isi se hoga)."""
+    if depth > 3 or not isinstance(node, dict):
+        return None
+    for k in ("created_at", "created_date_time", "created", "penalty_created"):
+        d = _parse_dt(node.get(k))
+        if d:
+            return d
+    for v in node.values():
+        if isinstance(v, dict):
+            d = _find_base_dt(v, depth + 1)
+            if d:
+                return d
+    return None
+
+def _find_logs(node, depth=0):
+    """✅ PENALTY LOGS jaisi list dhoondo (entries mein attachments + status/date hon)."""
+    if depth > 6 or node is None:
+        return None
+    if isinstance(node, list):
+        if node and all(isinstance(x, dict) for x in node) and any(_has_attach_key(x) for x in node) and any(_has_meta_key(x) for x in node):
+            return node
+        for item in node:
+            r = _find_logs(item, depth + 1)
+            if r:
+                return r
+    elif isinstance(node, dict):
+        vals = [v for v in node.values() if isinstance(v, dict)]
+        if vals and len(vals) == len(node) and any(_has_attach_key(v) for v in vals):
+            return vals
+        for k in ("penalty_logs", "logs", "log", "history", "activities", "timeline", "records", "items"):
+            if k in node:
+                r = _find_logs(node[k], depth + 1)
+                if r:
+                    return r
+        for v in node.values():
+            if isinstance(v, (dict, list)):
+                r = _find_logs(v, depth + 1)
+                if r:
+                    return r
+    return None
+
+def _url_epoch(u):
+    """✅ Portal filename mein upload epoch embedded hota hai:
+       .../264612-801790389424.jpg → last 10 digits = 1790389424 (upload time)"""
+    import re
+    m = re.search(r"/[A-Za-z0-9_]+-(\d{11,14})\.(?:jpg|jpeg|png|webp|gif|bmp)(?:\?|$)", u.lower())
+    if not m:
+        return None
+    ep = int(m.group(1)[-10:])
+    if 1_600_000_000 <= ep <= 2_200_000_000:
+        return ep
+    return None
+
+def extract_attachments_grouped(node):
+    """✅ BEFORE/AFTER = filename upload-epoch vs penalty created_at (koi detail call NAHI):
+       - upload created_at ke ~5 min andar = BEFORE (FMO images) → UPER
+       - us ke baad = AFTER (hamare account ki images) → NEECHAY
+       - epoch/base na mile tab logs / key-name fallback"""
+    groups = {"before": [], "after": [], "other": []}
+    pairs = _extract_attachments(node, [], 0, "other")
     seen = set()
-    ded = []
-    for u in out:
+    uniq = []
+    for b, u in pairs:
         if u not in seen:
             seen.add(u)
-            ded.append(u)
-    return ded
+            uniq.append((b, u))
+    base = _find_base_dt(node)
+    epochs = [(_url_epoch(u), b, u) for b, u in uniq]
+    if base and any(e[0] for e in epochs):
+        PKT = timedelta(hours=5)
+        for ep, b, u in epochs:
+            if ep:
+                up_local = datetime.utcfromtimestamp(ep) + PKT   # upload wall-clock (PKT)
+                delta = (up_local - base).total_seconds()
+                bucket = "before" if -3600 <= delta <= 300 else "after"
+            else:
+                bucket = b if b in ("before", "after") else "other"
+            groups[bucket].append(u)
+        for k in ("before", "after"):
+            groups[k].sort(key=lambda u: _url_epoch(u) or 0)   # ✅ chronological order
+        return groups
+    # ---- Fallback: PENALTY LOGS order/time ----
+    logs = _find_logs(node)
+    if logs:
+        entries = []
+        for lg in logs:
+            urls = []
+            _collect_flat(lg, urls)
+            if urls:
+                entries.append((_log_dt(lg), _log_seq(lg), urls))
+        if entries and all(e[1] is not None for e in entries):
+            entries.sort(key=lambda e: e[1])
+        elif entries and all(e[0] is not None for e in entries):
+            entries.sort(key=lambda e: e[0])
+        seen2 = set()
+        for i, (t, sq, urls) in enumerate(entries):
+            b = "before" if (base and t and (t - base).total_seconds() <= 300) else ("before" if i == 0 else "after")
+            for u in urls:
+                if u in seen2:
+                    continue
+                seen2.add(u)
+                groups[b].append(u)
+        for b, u in uniq:
+            if u not in seen2:
+                groups.setdefault(b, []).append(u)
+        return groups
+    # ---- Fallback: key-name buckets / original order ----
+    for b, u in uniq:
+        groups.setdefault(b, []).append(u)
+    return groups
+def extract_attachments(node):
+    g = extract_attachments_grouped(node)
+    return g["before"] + g["after"] + g["other"]
+
+def att_urls(att):
+    """✅ DB value (grouped object YA legacy flat list) se flat URL list."""
+    if isinstance(att, dict):
+        out = []
+        for k in ("before", "after", "other"):
+            out.extend([u for u in (att.get(k) or []) if isinstance(u, str)])
+        return out
+    if isinstance(att, list):
+        return [u for u in att if isinstance(u, str)]
+    return []
 
 DETAIL_PATHS = [
     "/autoform/get-item-detail",
@@ -341,7 +545,7 @@ def map_records(recs):
             "grevience_decisions": _g(rec, "finalized_grevience_remarks"),
             "final_action_time": _g(rec, "final_date_time") or _g(rec, "finalized_grevience_date_time"),
             "can_auto_imposed": _g(rec, "is_auto_imposed"),
-            "attachments": extract_attachments(rec),
+            "attachments": extract_attachments_grouped(rec),
             "raw": rec,
             "fetched_at": now,
         })
