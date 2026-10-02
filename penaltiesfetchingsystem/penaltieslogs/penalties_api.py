@@ -136,6 +136,10 @@ def penalties_logs():
 
 @penalties_router.post("/start")
 def penalties_start():
+    try:
+        os.remove(os.path.join(LOGS_DIR, "penalties.stopped"))
+    except Exception:
+        pass
     if _running_pid():
         return {"ok": False, "message": "Penalties server already running"}
     if _start_auto_process():
@@ -150,6 +154,11 @@ def penalties_stop():
     _kill_pid(pid)
     try:
         os.remove(PID_FILE)
+    except Exception:
+        pass
+    try:
+        with open(os.path.join(LOGS_DIR, "penalties.stopped"), "w") as f:
+            f.write("stopped")
     except Exception:
         pass
     try:

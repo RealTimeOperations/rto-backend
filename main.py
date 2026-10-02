@@ -7,6 +7,8 @@ import io
 import ctypes
 import subprocess
 import contextlib
+import threading
+import time
 from datetime import datetime
 
 # ---- Folder layout -----------------------------------------------------------
@@ -237,6 +239,10 @@ def process_status():
 @app.post("/process/start")
 def process_start():
     """Start auto_attendance.py in background (hidden console)."""
+    try:
+        os.remove(os.path.join(LOGS_DIR, ".attendance.stopped"))
+    except Exception:
+        pass
     pid = _read_pid()
     if pid and _pid_alive(pid):
         return {"success": True, "status": "already_running", "pid": pid}
@@ -261,6 +267,15 @@ def process_stop():
         kernel32.TerminateProcess(h, 1)
         kernel32.CloseHandle(h)
     try:
+        os.remove(PID_FILE)
+    except Exception:
+        pass
+    try:
+        with open(os.path.join(LOGS_DIR, ".attendance.stopped"), "w") as f:
+            f.write("stopped")
+    except Exception:
+        pass
+    try:
         with open(ATT_LOG, "w", encoding="utf-8") as f:   # rewrite: only the latest line is kept
             f.write("[" + datetime.now().strftime('%Y-%m-%d %H:%M:%S') + "] PROCESS STOPPED - stopped from Admin Panel\n")
     except Exception:
@@ -271,6 +286,82 @@ def process_stop():
         pass
     return {"success": True, "status": "stopped"}
 
+
+# ----------------------------------------------------------------------------
+# ✅ AUTO-START + WATCHDOG — teeno auto-sync processes PC on hote hi khud start
+# ----------------------------------------------------------------------------
+SYNC_PROCESSES = {
+    "attendance": {
+        "script": os.path.join(METHOD_DIR, "auto_attendance.py"),
+        "pid": PID_FILE,
+        "flag": os.path.join(LOGS_DIR, ".attendance.stopped"),
+    },
+    "containers": {
+        "script": os.path.join(ROOT_DIR, "containerfetchingsystem", "containerfetchingmethod", "containers_auto.py"),
+        "pid": os.path.join(ROOT_DIR, "containerfetchingsystem", "containerlogs", "containers.pid"),
+        "flag": os.path.join(ROOT_DIR, "containerfetchingsystem", "containerlogs", "containers.stopped"),
+    },
+    "penalties": {
+        "script": os.path.join(ROOT_DIR, "penaltiesfetchingsystem", "penaltiesfetchingmethod", "penalties_auto.py"),
+        "pid": os.path.join(ROOT_DIR, "penaltiesfetchingsystem", "penaltieslogs", "penalties.pid"),
+        "flag": os.path.join(ROOT_DIR, "penaltiesfetchingsystem", "penaltieslogs", "penalties.stopped"),
+    },
+}
+
+def _fresh_boot():
+    """PC abhi abhi on hua (uptime < 10 min) → stopped flags clear karo."""
+    try:
+        return ctypes.windll.kernel32.GetTickCount64() < 10 * 60 * 1000
+    except Exception:
+        return True
+
+def _ensure_sync_processes():
+    for name, cfg in SYNC_PROCESSES.items():
+        try:
+            if os.path.exists(cfg["flag"]):
+                continue                      # admin ne stop kiya tha — respect karo
+            pid = None
+            try:
+                pid = int(open(cfg["pid"], "r").read().strip())
+            except Exception:
+                pid = None
+            if pid and _pid_alive(pid):
+                continue                      # pehle se running
+            if not os.path.exists(cfg["script"]):
+                continue
+            exe = PYTHON_EXE
+            if os.name == "nt":
+                pythonw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
+                if os.path.exists(pythonw):
+                    exe = pythonw
+            subprocess.Popen(
+                [exe, cfg["script"]],
+                cwd=os.path.dirname(cfg["script"]),
+                creationflags=0x08000000,     # CREATE_NO_WINDOW (hidden)
+            )
+            print(f"✅ Auto-start: {name} sync process started")
+        except Exception as e:
+            print(f"⚠️ Auto-start {name} failed: {e}")
+
+def _sync_watchdog_loop():
+    while True:
+        time.sleep(60)
+        try:
+            _ensure_sync_processes()          # crash ho gaya to khud restart
+        except Exception:
+            pass
+
+@app.on_event("startup")
+def _auto_start_sync_processes():
+    if _fresh_boot():
+        for cfg in SYNC_PROCESSES.values():
+            try:
+                if os.path.exists(cfg["flag"]):
+                    os.remove(cfg["flag"])
+            except Exception:
+                pass
+    _ensure_sync_processes()
+    threading.Thread(target=_sync_watchdog_loop, daemon=True).start()
 
 if __name__ == "__main__":
     import uvicorn

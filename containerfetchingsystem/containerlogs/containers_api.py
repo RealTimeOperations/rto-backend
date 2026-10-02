@@ -98,6 +98,10 @@ def containers_logs():
 
 @containers_router.post("/start")
 def containers_start():
+    try:
+        os.remove(os.path.join(LOGS_DIR, "containers.stopped"))
+    except Exception:
+        pass
     if _running_pid():
         return {"ok": False, "message": "Containers server already running"}
     script = os.path.join(METHOD_DIR, "containers_auto.py")
@@ -150,6 +154,11 @@ def containers_stop():
         return {"ok": False, "message": f"Stop failed: {e}"}
     try:
         os.remove(PID_FILE)
+    except Exception:
+        pass
+    try:
+        with open(os.path.join(LOGS_DIR, "containers.stopped"), "w") as f:
+            f.write("stopped")
     except Exception:
         pass
     try:
