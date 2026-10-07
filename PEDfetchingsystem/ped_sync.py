@@ -32,11 +32,16 @@ def sync_month(month: str = None):
     """
     month = month or current_month()
     header, rows, _raw = ped_portal.fetch_month(month)
-
     if not rows:
         return {"status": "empty", "month": month, "rows": 0}
-
     now = datetime.datetime.now().isoformat()
+    # ✅ SINGLE-MONTH STORAGE: DB mein sirf latest synced month rakho —
+    #    baqi sab purana data delete karo (frontend jo dikha raha hai bas wahi DB mein ho)
+    try:
+        sb.table("pedmonthlydata").delete().neq("month", month).execute()
+        sb.table("pedmonthlymeta").delete().neq("month", month).execute()
+    except Exception as e:
+        print(f"⚠️ PED cleanup failed: {e}")
 
     # ✅ Daily rows upsert (unique: month + row_date)
     db_rows = []
