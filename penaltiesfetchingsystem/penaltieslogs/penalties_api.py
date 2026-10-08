@@ -177,62 +177,64 @@ def penalties_mark_stopped():
 
 @penalties_router.post("/imposed-report")
 def penalties_imposed_report(req: dict):
-    """✅ STATELESS on-demand fetch: date range ki penalties rows return karo.
-    - Koi DB write NAHI, koi pause flag NAHI — auto-sync process bilkul affect nahi hota
-    - Data sirf HTTP response mein jata hai (frontend memory mein temporary rakhta hai)
-    """
-    from datetime import timedelta
+    import re as _re
     
+    def _norm(v):
+        s = str(v or "").strip()
+        m = _re.match(r"(\d{4})-(\d{2})-(\d{2})", s)
+        if m: return f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
+        return s[:10]
+
     date_from = str((req or {}).get("date_from") or "").strip()
     date_to = str((req or {}).get("date_to") or "").strip()
     
-    # Backward compatibility: agar purana single date format aaye
+    # Backward compatibility for single date
     if not date_from and not date_to:
-        date_from = str((req or {}).get("date") or "").strip()
-        date_to = date_from
-    
+        single = str((req or {}).get("date") or "").strip()
+        date_from = date_to = single
+        
     if not date_from or not date_to:
         return {"ok": False, "message": "Date range required (date_from, date_to)"}
-    
     try:
-        d_from = datetime.strptime(date_from, "%Y-%m-%d")
-        d_to = datetime.strptime(date_to, "%Y-%m-%d")
+        datetime.strptime(date_from, "%Y-%m-%d")
+        datetime.strptime(date_to, "%Y-%m-%d")
     except ValueError:
         return {"ok": False, "message": "Invalid date format (YYYY-MM-DD)"}
-    
     if date_from > date_to:
-        return {"ok": False, "message": "date_from cannot be after date_to"}
-    
-    today = datetime.now().strftime("%Y-%m-%d")
-    if date_to > today:
+        return {"ok": False, "message": "From date To date se pehle honi chahiye"}
+    if date_to > datetime.now().strftime("%Y-%m-%d"):
         return {"ok": False, "message": "Future date allowed nahi"}
-    
-    # Maximum 31 days ka range allow karo (performance protection)
-    days_diff = (d_to - d_from).days
-    if days_diff > 31:
-        return {"ok": False, "message": "Date range cannot exceed 31 days"}
-    
+
     try:
         from penaltiesfetchingsystem.penaltiesfetchingmethod import penalties_portal as PP
         token, office_id, designation_id = PP.login()
         
-        all_rows = []
-        current_date = d_from
-        while current_date <= d_to:
-            date_str = current_date.strftime("%Y-%m-%d")
-            rows = PP.fetch_penalties_report(token, office_id, designation_id, custom_date=date_str)
-            mapped = PP.map_records(rows)
-            for m in mapped:
-                m.pop("raw", None)
-            all_rows.extend(mapped)
-            current_date += timedelta(days=1)
+        # ✅ NAYA FAST TAREEQA: Portal ko direct Date Range bhejo
+        # Purana day-by-day loop remove kar diya hai kyunke range filter support hota hai
+        raw_rows = PP.fetch_penalties_range(token, office_id, designation_id, date_from, date_to)
+        mapped = PP.map_records(raw_rows)
+        
+        # Filter just in case portal returns out-of-bounds data
+        rows = [m for m in mapped if date_from <= _norm(m.get("penalty_date")) <= date_to]
+
+        # Dedupe by id + payload halka + date se sort (nayi pehle)
+        seen = set()
+        final = []
+        for m in rows:
+            if m["id"] in seen:
+                continue
+            seen.add(m["id"])
+            m.pop("raw", None)
+            final.append(m)
+            
+        final.sort(key=lambda m: _norm(m.get("penalty_date")), reverse=True)
         
         return {
-            "ok": True, 
-            "date_from": date_from, 
-            "date_to": date_to, 
-            "count": len(all_rows), 
-            "rows": all_rows
+            "ok": True,
+            "date_from": date_from,
+            "date_to": date_to,
+            "count": len(final),
+            "rows": final,
         }
     except Exception as e:
         return {"ok": False, "message": f"Fetch failed: {e}"}

@@ -481,6 +481,77 @@ def fetch_penalties_report(token, office_id, designation_id, custom_date=None):
     print(f"Fetched {total} penalties (date_filter={used_date}) -> {date_label}: {len(out)} (Tehsil Haroonabad)")
     return out
 
+# ✅ NAYA: Range fetch (bohat fast - sirf 1-2 calls)
+def _payload_range(page, date_from, date_to):
+    filters = {
+        "division_id": 1,
+        "district_id": 2,
+        "tehsil_id": TEHSIL_HAROONABAD,
+        "penalty_type_id": "",
+        "status": "",
+        "penalty_date": [date_from, date_to],  # ✅ Portal ko direct range bheji
+    }
+    return {
+        "slug": "contractor-penalties",
+        "id": "0",
+        "page": page,
+        "search_keyword": "",
+        "displayedColumnsAll": COLS,
+        "filters_data": filters,
+        "module_id": 145,
+        "plateform": "web",
+        "requesting_url": "/penalty-management/view/contractor-penalties",
+        "size": 250,
+        "sorting": "",
+        "user_type": "contractor",
+    }
+
+def _fetch_page_range(token, office_id, designation_id, page, date_from, date_to):
+    body = json.dumps(_payload_range(page, date_from, date_to), separators=(",", ":"))
+    h = PC.base_headers()
+    h["Referer"] = REFERER
+    h["Authorization"] = "Bearer " + token
+    h["Active-Office-Id"] = str(office_id)
+    h["Active-Designation-Id"] = str(designation_id)
+    h.update(PC.sign_headers("POST", LISTING_URL, body, token))
+    r = requests.post(LISTING_URL, data=body, headers=h, timeout=45)
+    r.raise_for_status()
+    return extract_records(r.json())
+
+def fetch_penalties_range(token, office_id, designation_id, date_from, date_to):
+    """✅ Poora range ek sath fetch karo (day-by-day ki zaroorat nahi)"""
+    out = []
+    page = 1
+    try:
+        while page <= 20:
+            recs = _fetch_page_range(token, office_id, designation_id, page, date_from, date_to)
+            if page == 1 and not recs:
+                break
+            out.extend(recs)
+            if len(recs) < 250:
+                break
+            page += 1
+            time.sleep(0.2)
+    except Exception as e:
+        print(f"Range fetch error: {e}")
+    return out
+def fetch_penalties_all(token, office_id, designation_id):
+    """✅ Bina date filter — portal ka poora available window (haaliya ~6 months) ek call mein"""
+    out = []
+    page = 1
+    try:
+        while page <= 10:
+            recs = _fetch_page(token, office_id, designation_id, page, False, None)
+            if page == 1 and not recs:
+                break
+            out.extend(recs)
+            if len(recs) < 250:
+                break
+            page += 1
+            time.sleep(0.3)
+    except Exception:
+        out = []
+    return out
 def _g(rec, *names):
     for n in names:
         for k in rec.keys():
