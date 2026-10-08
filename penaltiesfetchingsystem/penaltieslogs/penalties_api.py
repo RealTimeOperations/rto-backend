@@ -177,27 +177,63 @@ def penalties_mark_stopped():
 
 @penalties_router.post("/imposed-report")
 def penalties_imposed_report(req: dict):
-    """✅ STATELESS on-demand fetch: kisi bhi (purani) date ki penalties rows return karo.
+    """✅ STATELESS on-demand fetch: date range ki penalties rows return karo.
     - Koi DB write NAHI, koi pause flag NAHI — auto-sync process bilkul affect nahi hota
     - Data sirf HTTP response mein jata hai (frontend memory mein temporary rakhta hai)
     """
-    date_str = str((req or {}).get("date") or "").strip()
-    if not date_str:
-        return {"ok": False, "message": "Date required"}
+    from datetime import timedelta
+    
+    date_from = str((req or {}).get("date_from") or "").strip()
+    date_to = str((req or {}).get("date_to") or "").strip()
+    
+    # Backward compatibility: agar purana single date format aaye
+    if not date_from and not date_to:
+        date_from = str((req or {}).get("date") or "").strip()
+        date_to = date_from
+    
+    if not date_from or not date_to:
+        return {"ok": False, "message": "Date range required (date_from, date_to)"}
+    
     try:
-        datetime.strptime(date_str, "%Y-%m-%d")
+        d_from = datetime.strptime(date_from, "%Y-%m-%d")
+        d_to = datetime.strptime(date_to, "%Y-%m-%d")
     except ValueError:
         return {"ok": False, "message": "Invalid date format (YYYY-MM-DD)"}
-    if date_str > datetime.now().strftime("%Y-%m-%d"):
+    
+    if date_from > date_to:
+        return {"ok": False, "message": "date_from cannot be after date_to"}
+    
+    today = datetime.now().strftime("%Y-%m-%d")
+    if date_to > today:
         return {"ok": False, "message": "Future date allowed nahi"}
+    
+    # Maximum 31 days ka range allow karo (performance protection)
+    days_diff = (d_to - d_from).days
+    if days_diff > 31:
+        return {"ok": False, "message": "Date range cannot exceed 31 days"}
+    
     try:
         from penaltiesfetchingsystem.penaltiesfetchingmethod import penalties_portal as PP
         token, office_id, designation_id = PP.login()
-        rows = PP.fetch_penalties_report(token, office_id, designation_id, custom_date=date_str)
-        mapped = PP.map_records(rows)
-        for m in mapped:
-            m.pop("raw", None)   # payload halka rakho
-        return {"ok": True, "date": date_str, "count": len(mapped), "rows": mapped}
+        
+        all_rows = []
+        current_date = d_from
+        while current_date <= d_to:
+            date_str = current_date.strftime("%Y-%m-%d")
+            rows = PP.fetch_penalties_report(token, office_id, designation_id, custom_date=date_str)
+            mapped = PP.map_records(rows)
+            for m in mapped:
+                m.pop("raw", None)
+            all_rows.extend(mapped)
+            current_date += timedelta(days=1)
+        
+        return {
+            "ok": True, 
+            "date_from": date_from, 
+            "date_to": date_to, 
+            "count": len(all_rows), 
+            "rows": all_rows
+        }
     except Exception as e:
         return {"ok": False, "message": f"Fetch failed: {e}"}
 
