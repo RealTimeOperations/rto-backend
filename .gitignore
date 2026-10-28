@@ -12,6 +12,7 @@ venv/
 # Runtime state files (attendancelogs folder mein banti hain)
 .attendance_fingerprint
 .attendance.pid
+.attendance.stopped
 containers.pid
 .containers_fingerprint
 .penalties_fingerprint

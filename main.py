@@ -75,6 +75,7 @@ from containerfetchingsystem.containerlogs.containers_api import containers_rout
 from penaltiesfetchingsystem.penaltieslogs.penalties_api import penalties_router
 from PEDfetchingsystem.ped_api import router as ped_router
 from PEDfetchingsystem.tmo_api import router as tmo_router
+from vehiclefetchingsystem.vehiclelogs.vehicles_api import vehicles_router
 
 ATT_LOG = os.path.join(LOGS_DIR, "auto_attendance.log")
 EMP_LOG = os.path.join(LOGS_DIR, "employees_sync.log")
@@ -87,6 +88,7 @@ app.include_router(containers_router)
 app.include_router(penalties_router)
 app.include_router(ped_router)
 app.include_router(tmo_router)
+app.include_router(vehicles_router)
 
 # CORS (allow calls from the frontend)
 app.add_middleware(
@@ -314,6 +316,16 @@ SYNC_PROCESSES = {
         "script": os.path.join(ROOT_DIR, "penaltiesfetchingsystem", "penaltiesfetchingmethod", "penalties_auto.py"),
         "pid": os.path.join(ROOT_DIR, "penaltiesfetchingsystem", "penaltieslogs", "penalties.pid"),
         "flag": os.path.join(ROOT_DIR, "penaltiesfetchingsystem", "penaltieslogs", "penalties.stopped"),
+    },
+        "vehiclestatus": {
+        "script": os.path.join(ROOT_DIR, "vehiclefetchingsystem", "vehiclefetchingmethod", "vehiclestatus_auto.py"),
+        "pid": os.path.join(ROOT_DIR, "vehiclefetchingsystem", "vehiclelogs", "vehiclestatus.pid"),
+        "flag": os.path.join(ROOT_DIR, "vehiclefetchingsystem", "vehiclelogs", "vehiclestatus.stopped"),
+    },
+    "distancereport": {
+        "script": os.path.join(ROOT_DIR, "vehiclefetchingsystem", "vehiclefetchingmethod", "distancereport_auto.py"),
+        "pid": os.path.join(ROOT_DIR, "vehiclefetchingsystem", "vehiclelogs", "distancereport.pid"),
+        "flag": os.path.join(ROOT_DIR, "vehiclefetchingsystem", "vehiclelogs", "distancereport.stopped"),
     },
 }
 
