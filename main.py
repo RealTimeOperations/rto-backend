@@ -299,7 +299,7 @@ def process_stop():
 
 
 # ----------------------------------------------------------------------------
-# ✅ AUTO-START + WATCHDOG — teeno auto-sync processes PC on hote hi khud start
+# AUTO-START + WATCHDOG — Attendance, Containers, Penalties only
 # ----------------------------------------------------------------------------
 SYNC_PROCESSES = {
     "attendance": {
@@ -317,16 +317,7 @@ SYNC_PROCESSES = {
         "pid": os.path.join(ROOT_DIR, "penaltiesfetchingsystem", "penaltieslogs", "penalties.pid"),
         "flag": os.path.join(ROOT_DIR, "penaltiesfetchingsystem", "penaltieslogs", "penalties.stopped"),
     },
-        "vehiclestatus": {
-        "script": os.path.join(ROOT_DIR, "vehiclefetchingsystem", "vehiclefetchingmethod", "vehiclestatus_auto.py"),
-        "pid": os.path.join(ROOT_DIR, "vehiclefetchingsystem", "vehiclelogs", "vehiclestatus.pid"),
-        "flag": os.path.join(ROOT_DIR, "vehiclefetchingsystem", "vehiclelogs", "vehiclestatus.stopped"),
-    },
-    "distancereport": {
-        "script": os.path.join(ROOT_DIR, "vehiclefetchingsystem", "vehiclefetchingmethod", "distancereport_auto.py"),
-        "pid": os.path.join(ROOT_DIR, "vehiclefetchingsystem", "vehiclelogs", "distancereport.pid"),
-        "flag": os.path.join(ROOT_DIR, "vehiclefetchingsystem", "vehiclelogs", "distancereport.stopped"),
-    },
+
 }
 
 def _fresh_boot():

@@ -16,6 +16,8 @@ venv/
 containers.pid
 .containers_fingerprint
 .penalties_fingerprint
+.distancereport_fingerprint
+.vehiclestatus_fingerprint
 penalties.pid
 # IDE
 .vscode/
